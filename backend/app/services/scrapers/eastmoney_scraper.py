@@ -47,6 +47,8 @@ class EastmoneyScraper(AbstractScraper):
 
         except Exception as e:
             logger.error("EastMoney scraper failed for %s: %s", nickname, e)
+        else:
+            await self._bm.save_auth_state(context, "东方财富")
         finally:
             await context.close()
 

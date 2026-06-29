@@ -140,6 +140,28 @@ class KLineResponse(BaseModel):
     mark_line_date: Optional[str] = None  # 绿色虚线标注日期
 
 
+# ===== 平台凭据管理 =====
+
+class CredentialCreate(BaseModel):
+    platform: str = Field(..., description="平台名称: 知乎/微博/雪球/东方财富/公众号")
+    username: str = Field(..., min_length=1, max_length=100, description="账号/手机号/邮箱")
+    password: Optional[str] = Field(None, description="密码")
+
+
+class CredentialResponse(BaseModel):
+    id: int
+    platform: str
+    username: str
+    is_active: bool
+    login_status: str
+    last_login_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ===== 通用响应 =====
 
 class APIResponse(BaseModel):

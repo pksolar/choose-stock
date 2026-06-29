@@ -138,3 +138,19 @@ class StockInfo(Base):
     market = Column(String(10), nullable=True, comment="市场: SH/SZ")
     industry = Column(String(50), nullable=True, comment="所属行业")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PlatformCredential(Base):
+    """平台账号凭据表"""
+    __tablename__ = "platform_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(20), unique=True, nullable=False, comment="平台名称")
+    username = Column(String(100), nullable=True, comment="账号/手机号/邮箱")
+    password = Column(String(200), nullable=True, comment="密码")
+    cookies_json = Column(Text, nullable=True, comment="持久化 Cookie（JSON）")
+    is_active = Column(Boolean, default=True, comment="是否启用")
+    last_login_at = Column(DateTime, nullable=True, comment="上次登录时间")
+    login_status = Column(String(20), default="unknown", comment="登录状态: unknown/success/failed")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

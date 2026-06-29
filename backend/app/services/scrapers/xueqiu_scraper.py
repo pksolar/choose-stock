@@ -26,7 +26,9 @@ class XueqiuScraper(AbstractScraper):
         articles = []
         nickname = vstar.nickname
 
-        context = await self._bm.create_context("default")
+        await self._bm.ensure_authenticated("雪球")
+
+        context = await self._bm.create_context("雪球")
         try:
             page = await context.new_page()
 
@@ -47,6 +49,8 @@ class XueqiuScraper(AbstractScraper):
 
         except Exception as e:
             logger.error("Xueqiu scraper failed for %s: %s", nickname, e)
+        else:
+            await self._bm.save_auth_state(context, "雪球")
         finally:
             await context.close()
 

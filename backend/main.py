@@ -26,6 +26,7 @@ from app.utils.stock_mapper import stock_mapper
 from app.api.vstars import router as vstars_router
 from app.api.analysis import router as analysis_router
 from app.api.stocks import router as stocks_router
+from app.api.credentials import router as credentials_router
 
 
 def seed_initial_data():
@@ -47,9 +48,9 @@ def seed_initial_data():
                 db.delete(v)
                 print(f"  已清理旧版内置大V: {old_name} ({v.platform})")
 
-        # 仅保留一位示例大V
+        # 示例大V（真实知乎用户）
         BUILTIN_VSTARS = [
-            ("MR Dang", "知乎", "auto", 1.0),
+            ("张佳玮", "知乎", "auto", 1.0),
         ]
 
         for nickname, platform, mode, weight in BUILTIN_VSTARS:
@@ -150,6 +151,7 @@ app.add_middleware(
 app.include_router(vstars_router)
 app.include_router(analysis_router)
 app.include_router(stocks_router)
+app.include_router(credentials_router)
 
 
 @app.get("/")

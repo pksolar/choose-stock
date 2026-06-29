@@ -52,9 +52,9 @@ if not exist ".env" (
     copy ".env.example" ".env" >nul
     echo [OK] Yi ChuangJian .env PeiZhi
 
-    :: SheZhi USE_MOCK_DATA=true (MoNi ShuJu, WuXu WangLuo QingQiu)
-    %PYTHON_CMD% -c "f=open('.env','r');c=f.read();f.close();c=c.replace('USE_MOCK_DATA=false','USE_MOCK_DATA=true');f=open('.env','w');f.write(c);f.close()"
-    echo [OK] Yi KaiQi MoNi ShuJu MoShi (USE_MOCK_DATA=true^)
+    :: SheZhi USE_MOCK_DATA=false (QiYong ZhenShi PaChong)
+    %PYTHON_CMD% -c "f=open('.env','r');c=f.read();f.close();c=c.replace('USE_MOCK_DATA=true','USE_MOCK_DATA=false');f=open('.env','w');f.write(c);f.close()"
+    echo [OK] Yi KaiQi ZhenShi PaChong MoShi (USE_MOCK_DATA=false^)
 ) else (
     echo [OK] .env PeiZhi Yi CunZai
 )

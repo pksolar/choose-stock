@@ -194,10 +194,16 @@ def fetch_articles_for_vstar(vstar: VStar, days_back: int = 30) -> List[Dict]:
                     return articles[:30]
                 else:
                     print(f"[WARN] Playwright scraper ({platform}) returned 0 articles for '{vstar.nickname}'")
+                    if platform in ("知乎", "雪球"):
+                        print(f"      提示: {platform} 可能需要登录凭据才能抓取内容")
+                        print(f"      配置方法: 在 .env 中设置 {platform.upper()}_USERNAME 和 {platform.upper()}_PASSWORD")
+                        print(f"      或通过 API: POST /api/credentials 配置账号密码后调用 POST /api/credentials/{platform}/login")
         else:
             print(f"[WARN] Browser not ready, skipping Playwright scraper for '{vstar.nickname}'")
     except Exception as e:
         print(f"[WARN] Playwright scraper failed ({platform}): {e}")
+        if "login" in str(e).lower() or "credential" in str(e).lower():
+            print(f"      提示: {platform} 可能需要登录凭据，请通过 /api/credentials 配置")
 
     # 2. Fall back to mock data if configured
     if settings.USE_MOCK_DATA:

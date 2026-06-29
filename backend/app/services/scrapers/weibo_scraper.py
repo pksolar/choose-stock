@@ -27,6 +27,8 @@ class WeiboScraper(AbstractScraper):
         articles = []
         nickname = vstar.nickname
 
+        await self._bm.ensure_authenticated("weibo")
+
         context = await self._bm.create_context("weibo")
         try:
             page = await context.new_page()
@@ -48,6 +50,9 @@ class WeiboScraper(AbstractScraper):
 
         except Exception as e:
             logger.error("Weibo scraper failed for %s: %s", nickname, e)
+        else:
+            # Persist cookies for next run
+            await self._bm.save_auth_state(context, "weibo")
         finally:
             await context.close()
 

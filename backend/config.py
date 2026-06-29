@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     BROWSER_USE_CDP: bool = False   # 连接已有 Chrome 而非启动新浏览器
     BROWSER_CDP_ENDPOINT: str = "http://localhost:9222"
 
+    # 平台凭据持久化
+    COOKIE_STORAGE_DIR: str = str(BASE_DIR / "data" / "cookies")
+    PLAYWRIGHT_AUTH_DIR: str = str(BASE_DIR / "data" / "auth_states")
+
+    # 默认平台凭据（可在 .env 中配置，也可通过 API/UI 配置）
+    ZHIHU_USERNAME: str = ""
+    ZHIHU_PASSWORD: str = ""
+    WEIBO_USERNAME: str = ""
+    WEIBO_PASSWORD: str = ""
+    XUEQIU_USERNAME: str = ""
+    XUEQIU_PASSWORD: str = ""
+
     class Config:
         env_file = str(BASE_DIR / ".." / ".env")
         env_file_encoding = "utf-8"
@@ -60,6 +72,8 @@ settings = Settings()
 
 # 确保数据目录存在
 os.makedirs(BASE_DIR / "data", exist_ok=True)
+os.makedirs(BASE_DIR / "data" / "cookies", exist_ok=True)
+os.makedirs(BASE_DIR / "data" / "auth_states", exist_ok=True)
 
 
 def check_redis_available() -> bool:
