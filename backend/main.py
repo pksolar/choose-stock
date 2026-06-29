@@ -97,9 +97,22 @@ async def lifespan(app: FastAPI):
     print("数据库表已初始化")
     stock_mapper.load_from_akshare()  # 尝试加载全量股票列表
     print(f"股票映射已加载，共 {stock_mapper.stock_count} 只股票")
+
+    # 启动 Playwright 浏览器
+    try:
+        from app.services.browser_manager import browser_manager
+        await browser_manager.start()
+    except Exception as e:
+        print(f"[WARN] 浏览器启动失败: {e}，爬虫将使用 Mock 数据")
+
     seed_initial_data()
     yield
     # 关闭时执行
+    try:
+        from app.services.browser_manager import browser_manager
+        await browser_manager.stop()
+    except Exception:
+        pass
     print("应用关闭")
 
 

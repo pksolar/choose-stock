@@ -9,61 +9,66 @@
 - **交叉比对**：自动发现被多位大V共同看多的股票，按热度值排序展示
 - **证据链**：点击股票查看每位大V的原文摘要、情感标签、原文链接
 - **K线图**：叠加显示股票近期K线走势，绿色虚线标注大V集中提及时间点
-- **异步处理**：Celery 后台处理爬取和分析任务，前端轮询实时更新进度
+- **异步处理**：Redis 可用时使用 Celery 分布式任务队列，不可用时自动切换线程池模式
 
 ## 快速开始
 
-### 方式一：Docker 一键启动（推荐）
+### 方式一：Windows 无 Docker 一键启动（推荐）
+
+**前置要求**：Python 3.10+ 和 Node.js 18+
+
+```bat
+# 双击运行或命令行执行
+start_no_docker.bat
+```
+
+脚本会自动完成：
+- 检查 Python 和 Node.js 环境
+- 创建 `.env` 配置（默认开启 Mock 数据模式）
+- 安装后端 Python 依赖 + 前端 npm 依赖
+- 启动后端 (localhost:8000) + 前端 (localhost:5173)
+- 自动打开浏览器
+
+> **无需 Docker、无需 Redis**。当 Redis 不可用时，后端自动使用线程池执行分析任务。
+
+### 方式二：Docker 一键启动
 
 ```bash
-# 1. 克隆或进入项目目录
-cd vstock-radar
-
-# 2. 启动所有服务（需要 Docker 和 docker-compose）
+# 启动所有服务（需要 Docker）
 docker compose up -d --build
 
-# 3. 访问服务
+# 访问
 # 前端: http://localhost:5173
 # 后端API: http://localhost:8000
 # API文档: http://localhost:8000/docs
 ```
 
-### 方式二：本地开发模式
-
-**前置要求**：
-- Python 3.10+
-- Node.js 18+
-- Redis（运行在 localhost:6379）
+### 方式三：Linux/Mac 一键脚本
 
 ```bash
-# Linux/Mac
 chmod +x start.sh
 ./start.sh
-
-# Windows
-start.bat
 ```
 
-### 方式三：手动启动
+### 方式四：手动启动
 
 ```bash
-# 1. 启动 Redis
-redis-server
-
-# 2. 安装并启动后端
+# 1. 安装并启动后端
 cd backend
 pip install -r requirements.txt
 python main.py
 
-# 3. 启动 Celery Worker（新终端）
-cd backend
-celery -A celery_worker worker --loglevel=info --concurrency=2 --pool=solo
-
-# 4. 安装并启动前端（新终端）
+# 2. 安装并启动前端（新终端）
 cd frontend
 npm install
 npm run dev
 ```
+
+> 可选：如需异步任务处理，先启动 Redis（默认 6379 端口），再启动 Celery Worker：
+> ```bash
+> cd backend
+> celery -A celery_worker worker --loglevel=info --concurrency=2 --pool=solo
+> ```
 
 ## 使用流程
 
@@ -87,7 +92,7 @@ npm run dev
 | `BACKEND_PORT` | 后端端口 | 8000 |
 | `FRONTEND_PORT` | 前端端口 | 5173 |
 
-设置 `USE_MOCK_DATA=false` 后，系统会尝试真实抓取（需配置 Playwright 和代理）。
+设置 `USE_MOCK_DATA=false` 后，系统会尝试真实抓取（需配置网络环境）。
 
 ## 热度算法
 
@@ -104,13 +109,13 @@ npm run dev
 | 层级 | 技术 |
 |------|------|
 | 后端框架 | FastAPI (Python) |
-| 异步任务 | Celery + Redis |
+| 异步任务 | Celery + Redis / 线程池自动切换 |
 | 数据库 | SQLite (可切换 PostgreSQL) |
 | NLP | SnowNLP + jieba + 自定义金融词典 |
 | K线数据 | akshare |
 | 前端 | Vue 3 + Element Plus |
 | 图表 | ECharts |
-| 部署 | Docker / docker-compose |
+| 部署 | Docker / 本地直接运行 |
 
 ## API 接口概览
 
@@ -136,12 +141,12 @@ npm run dev
 ├── backend/
 │   ├── app/
 │   │   ├── api/           # FastAPI 路由
-│   │   ├── celery_tasks/  # Celery 异步任务
+│   │   ├── celery_tasks/  # Celery 异步任务（含线程池 fallback）
 │   │   ├── models/        # SQLAlchemy ORM 模型
 │   │   ├── schemas/       # Pydantic 校验模型
 │   │   ├── services/      # 业务逻辑（爬虫/NLP/分析/K线）
 │   │   └── utils/         # 工具类（股票映射等）
-│   ├── config.py           # 全局配置
+│   ├── config.py           # 全局配置（含 Redis 自动检测）
 │   ├── main.py             # FastAPI 入口
 │   ├── celery_worker.py    # Celery Worker 入口
 │   └── requirements.txt
@@ -157,7 +162,7 @@ npm run dev
 ├── docker-compose.yml
 ├── Dockerfile.backend
 ├── Dockerfile.frontend
-├── start.sh / start.bat
+├── start.sh / start.bat / start_no_docker.bat
 └── README.md
 ```
 

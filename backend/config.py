@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     BACKEND_PORT: int = 8000
     FRONTEND_PORT: int = 5173
 
+    # Playwright 浏览器自动化
+    PLAYWRIGHT_HEADLESS: bool = True
+    PLAYWRIGHT_TIMEOUT: int = 30000  # 页面加载超时（毫秒）
+    BROWSER_USE_CDP: bool = False   # 连接已有 Chrome 而非启动新浏览器
+    BROWSER_CDP_ENDPOINT: str = "http://localhost:9222"
+
     class Config:
         env_file = str(BASE_DIR / ".." / ".env")
         env_file_encoding = "utf-8"
