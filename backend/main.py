@@ -1,0 +1,153 @@
+"""
+V-Stock Radar (大V舆情聚合器) - FastAPI 主应用入口
+"""
+import sys
+from pathlib import Path
+
+# 确保 backend 目录在 Python path 中
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+from config import settings
+from app.models.database import init_db
+from app.models.models import VStar
+from app.models.database import SessionLocal
+from app.services.scraper import generate_mock_articles
+from app.utils.stock_mapper import stock_mapper
+
+from app.api.vstars import router as vstars_router
+from app.api.analysis import router as analysis_router
+from app.api.stocks import router as stocks_router
+
+
+def seed_initial_data():
+    """初始化种子数据：内置示例大V"""
+    db = SessionLocal()
+    try:
+        # 内置8位示例大V
+        BUILTIN_VSTARS = [
+            ("唐史主任司马迁", "雪球", "auto", 1.0),
+            ("招财大牛猫", "公众号", "auto", 0.6),
+            ("刘备教授", "知乎", "auto", 0.8),
+            ("林奇投资笔记", "雪球", "auto", 1.0),
+            ("期货小明", "微博", "auto", 0.6),
+            ("股海老船长", "东方财富", "auto", 0.6),
+            ("月风投资笔记", "知乎", "auto", 0.8),
+            ("价值发现者", "雪球", "auto", 1.0),
+            ("打板高手日记", "同花顺", "auto", 0.6),
+            ("老端投资学", "公众号", "auto", 0.6),
+        ]
+
+        for nickname, platform, mode, weight in BUILTIN_VSTARS:
+            existing = db.query(VStar).filter(VStar.nickname == nickname).first()
+            if not existing:
+                vstar = VStar(
+                    nickname=nickname,
+                    platform=platform,
+                    data_source_mode=mode,
+                    weight_coefficient=weight,
+                )
+                db.add(vstar)
+
+        db.commit()
+        print(f"已初始化 {len(BUILTIN_VSTARS)} 位示例大V")
+
+        if settings.USE_MOCK_DATA:
+            # Mock 模式：生成模拟文章
+            vstars = db.query(VStar).all()
+            articles = generate_mock_articles(db, vstars)
+            print(f"已生成 {len(articles)} 篇模拟文章")
+        else:
+            # 真实模式：后台异步为内置大V抓取文章（不阻塞启动）
+            import threading
+            from app.services.scraper import scrape_and_persist
+
+            def _scrape_all_vstars():
+                db2 = SessionLocal()
+                try:
+                    vstars = db2.query(VStar).all()
+                    for vstar in vstars:
+                        try:
+                            count = scrape_and_persist(vstar, db2)
+                            if count > 0:
+                                print(f"  已为 '{vstar.nickname}' 抓取 {count} 篇文章")
+                            else:
+                                print(f"  '{vstar.nickname}' 暂未抓取到文章（请检查昵称或使用刷新按钮重试）")
+                        except Exception as e:
+                            print(f"  抓取 '{vstar.nickname}' 失败: {e}")
+                finally:
+                    db2.close()
+
+            threading.Thread(target=_scrape_all_vstars, daemon=True).start()
+            print("已启动后台文章抓取任务...")
+
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时执行
+    print(f"启动 {settings.APP_NAME} v{settings.APP_VERSION}")
+    init_db()
+    print("数据库表已初始化")
+    stock_mapper.load_from_akshare()  # 尝试加载全量股票列表
+    print(f"股票映射已加载，共 {stock_mapper.stock_count} 只股票")
+    seed_initial_data()
+    yield
+    # 关闭时执行
+    print("应用关闭")
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="大V舆情聚合器 - 自动发现多位大V共同看多的A股股票",
+    lifespan=lifespan,
+)
+
+# CORS 配置（允许前端开发服务器）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        f"http://localhost:{settings.FRONTEND_PORT}",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(vstars_router)
+app.include_router(analysis_router)
+app.include_router(stocks_router)
+
+
+@app.get("/")
+def root():
+    return {
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "docs": "/docs",
+    }
+
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "mock_data": settings.USE_MOCK_DATA}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=settings.BACKEND_PORT,
+        reload=settings.DEBUG,
+    )
