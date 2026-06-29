@@ -2,7 +2,12 @@
 V-Stock Radar (大V舆情聚合器) - FastAPI 主应用入口
 """
 import sys
+import asyncio
 from pathlib import Path
+
+# Windows: ProactorEventLoop is required for subprocess support (Playwright/Chromium)
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # 确保 backend 目录在 Python path 中
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -13,7 +18,7 @@ from contextlib import asynccontextmanager
 
 from config import settings
 from app.models.database import init_db
-from app.models.models import VStar
+from app.models.models import VStar, Article
 from app.models.database import SessionLocal
 from app.services.scraper import generate_mock_articles
 from app.utils.stock_mapper import stock_mapper
@@ -24,21 +29,27 @@ from app.api.stocks import router as stocks_router
 
 
 def seed_initial_data():
-    """初始化种子数据：内置示例大V"""
+    """初始化种子数据：仅保留 MR Dang 作为示例。清理旧版预设大V。"""
     db = SessionLocal()
     try:
-        # 内置8位示例大V
+        # 旧版内置大V（需要清理）
+        OLD_BUILTIN_NICKNAMES = {
+            "唐史主任司马迁", "招财大牛猫", "刘备教授", "林奇投资笔记",
+            "期货小明", "股海老船长", "月风投资笔记", "价值发现者",
+            "打板高手日记", "老端投资学",
+        }
+
+        # 清理旧版内置大V
+        for old_name in OLD_BUILTIN_NICKNAMES:
+            v = db.query(VStar).filter(VStar.nickname == old_name).first()
+            if v:
+                db.query(Article).filter(Article.vstar_id == v.id).delete()
+                db.delete(v)
+                print(f"  已清理旧版内置大V: {old_name} ({v.platform})")
+
+        # 仅保留一位示例大V
         BUILTIN_VSTARS = [
-            ("唐史主任司马迁", "雪球", "auto", 1.0),
-            ("招财大牛猫", "公众号", "auto", 0.6),
-            ("刘备教授", "知乎", "auto", 0.8),
-            ("林奇投资笔记", "雪球", "auto", 1.0),
-            ("期货小明", "微博", "auto", 0.6),
-            ("股海老船长", "东方财富", "auto", 0.6),
-            ("月风投资笔记", "知乎", "auto", 0.8),
-            ("价值发现者", "雪球", "auto", 1.0),
-            ("打板高手日记", "同花顺", "auto", 0.6),
-            ("老端投资学", "公众号", "auto", 0.6),
+            ("MR Dang", "知乎", "auto", 1.0),
         ]
 
         for nickname, platform, mode, weight in BUILTIN_VSTARS:
@@ -51,17 +62,16 @@ def seed_initial_data():
                     weight_coefficient=weight,
                 )
                 db.add(vstar)
+                print(f"  已添加示例大V: {nickname} ({platform})")
 
         db.commit()
-        print(f"已初始化 {len(BUILTIN_VSTARS)} 位示例大V")
 
         if settings.USE_MOCK_DATA:
-            # Mock 模式：生成模拟文章
             vstars = db.query(VStar).all()
             articles = generate_mock_articles(db, vstars)
             print(f"已生成 {len(articles)} 篇模拟文章")
         else:
-            # 真实模式：后台异步为内置大V抓取文章（不阻塞启动）
+            # 后台异步为所有大V抓取文章
             import threading
             from app.services.scraper import scrape_and_persist
 

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # 应用基础配置
     APP_NAME: str = "V-Stock Radar"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # 数据库配置（默认使用 SQLite）
     DATABASE_URL_SYNC: str = f"sqlite:///{BASE_DIR}/data/vstock.db"

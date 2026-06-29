@@ -209,20 +209,17 @@ def fetch_articles_for_vstar(vstar: VStar, days_back: int = 30) -> List[Dict]:
 
 
 def _run_async(coro):
-    """Bridge async Playwright code to synchronous callers."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # We're inside an event loop (e.g., FastAPI test); create a new one
-            new_loop = asyncio.new_event_loop()
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
-        else:
-            return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    """Bridge async Playwright code to synchronous callers.
+
+    Playwright browser objects are bound to the event loop they were created in.
+    We must schedule the coroutine on that same loop, not create a new one.
+    """
+    from app.services.browser_manager import browser_manager
+    target_loop = getattr(browser_manager, '_loop', None)
+    if target_loop and target_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, target_loop)
+        return future.result(timeout=120)
+    return asyncio.run(coro)
 
 
 # ========================================================================

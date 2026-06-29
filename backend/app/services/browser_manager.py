@@ -2,6 +2,7 @@
 Playwright browser lifecycle manager.
 Singleton that maintains one long-lived Chromium instance shared across all platform scrapers.
 """
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -22,9 +23,11 @@ class BrowserManager:
         self._playwright = None
         self._browser: Optional[Browser] = None
         self._stealth_js: Optional[str] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def start(self):
         """Launch browser with anti-detection flags."""
+        self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
 
         launch_args = [
