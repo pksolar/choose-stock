@@ -66,6 +66,12 @@ def get_task_status(task_id: str, db: Session = Depends(get_db)):
 @router.get("/results/{task_id}", response_model=List[StockResultItem])
 def get_analysis_results(task_id: str, db: Session = Depends(get_db)):
     """获取分析结果榜单"""
+    from app.services.analyzer import parse_time_window
+
+    task = db.query(AnalysisTask).filter(AnalysisTask.id == task_id).first()
+    if not task:
+        return []
+
     results = (
         db.query(AnalysisResult)
         .filter(AnalysisResult.task_id == task_id)
@@ -76,25 +82,47 @@ def get_analysis_results(task_id: str, db: Session = Depends(get_db)):
     if not results:
         return []
 
-    # 构建返回数据
-    output = []
-    for r in results:
-        # 从mentions中获取大V列表
-        vstar_set = set()
-        mentions = (
-            db.query(StockMention)
-            .join(Article)
-            .filter(
-                StockMention.stock_code == r.stock_code,
-                Article.published_at >= datetime.utcnow().replace(day=1),  # 简化处理
-            )
+    # Compute cutoff from the task's time window
+    cutoff = task.created_at - parse_time_window(task.time_window) if task.created_at else datetime.utcnow()
+
+    # Collect all article_ids via mentions for the relevant stocks
+    stock_codes = [r.stock_code for r in results]
+    mentions = (
+        db.query(StockMention)
+        .join(Article)
+        .filter(
+            StockMention.stock_code.in_(stock_codes),
+            Article.published_at >= cutoff,
+        )
+        .all()
+    )
+
+    # Build article_id -> vstar lookup (single batch)
+    article_ids = list({m.article_id for m in mentions})
+    articles_map = {}
+    if article_ids:
+        articles = (
+            db.query(Article)
+            .filter(Article.id.in_(article_ids))
             .all()
         )
-        for m in mentions:
-            article = db.query(Article).filter(Article.id == m.article_id).first()
-            if article and article.vstar:
-                vstar_set.add(article.vstar.nickname)
+        vstar_ids = list({a.vstar_id for a in articles})
+        vstars_map = {}
+        if vstar_ids:
+            vstars = db.query(VStar).filter(VStar.id.in_(vstar_ids)).all()
+            vstars_map = {v.id: v for v in vstars}
+        articles_map = {a.id: a for a in articles}
 
+    # Group mentions by stock_code
+    mention_vstars = {}
+    for m in mentions:
+        article = articles_map.get(m.article_id)
+        if article and article.vstar:
+            mention_vstars.setdefault(m.stock_code, set()).add(article.vstar.nickname)
+
+    output = []
+    for r in results:
+        vstar_list = list(mention_vstars.get(r.stock_code, set()))[:10]
         output.append(StockResultItem(
             stock_code=r.stock_code,
             stock_name=r.stock_name or "",
@@ -105,7 +133,7 @@ def get_analysis_results(task_id: str, db: Session = Depends(get_db)):
             neutral_count=r.neutral_count,
             negative_count=r.negative_count,
             first_mention_time=r.first_mention_time,
-            vstar_list=list(vstar_set)[:10],  # 最多显示10位
+            vstar_list=vstar_list,
         ))
 
     return output
@@ -114,7 +142,6 @@ def get_analysis_results(task_id: str, db: Session = Depends(get_db)):
 @router.get("/stock-detail/{task_id}/{stock_code}", response_model=StockDetailResponse)
 def get_stock_detail(task_id: str, stock_code: str, db: Session = Depends(get_db)):
     """获取个股详情（证据链）"""
-    # 获取分析结果
     result = (
         db.query(AnalysisResult)
         .filter(
@@ -127,23 +154,37 @@ def get_stock_detail(task_id: str, stock_code: str, db: Session = Depends(get_db
     if not result:
         raise HTTPException(status_code=404, detail="未找到该股票的分析结果")
 
-    # 构建证据链
-    evidence_chain = []
-    vstar_set = set()
-
-    # 查找所有相关mention
+    # 查找所有相关mention，并 eager-load article + vstar
     mentions = (
         db.query(StockMention)
         .filter(StockMention.stock_code == stock_code)
         .all()
     )
 
+    article_ids = list({m.article_id for m in mentions})
+    articles_map = {}
+    vstars_map = {}
+    if article_ids:
+        articles = (
+            db.query(Article)
+            .filter(Article.id.in_(article_ids))
+            .all()
+        )
+        articles_map = {a.id: a for a in articles}
+        vstar_ids = list({a.vstar_id for a in articles})
+        if vstar_ids:
+            vstars = db.query(VStar).filter(VStar.id.in_(vstar_ids)).all()
+            vstars_map = {v.id: v for v in vstars}
+
+    evidence_chain = []
+    vstar_set = set()
+
     for m in mentions:
-        article = db.query(Article).filter(Article.id == m.article_id).first()
+        article = articles_map.get(m.article_id)
         if not article:
             continue
 
-        vstar = db.query(VStar).filter(VStar.id == article.vstar_id).first()
+        vstar = vstars_map.get(article.vstar_id)
         vstar_nickname = vstar.nickname if vstar else "未知"
         vstar_platform = vstar.platform if vstar else ""
 

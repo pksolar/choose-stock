@@ -77,7 +77,7 @@ def analyze_articles(
             StockMention.article_id == article.id
         ).first()
 
-        if existing_mentions and (datetime.utcnow() - article.created_at).seconds < 3600:
+        if existing_mentions and (datetime.utcnow() - article.created_at).total_seconds() < 3600:
             # 使用缓存结果重新读取
             for m in db.query(StockMention).filter(StockMention.article_id == article.id).all():
                 all_mentions.append((m.article_id, m.stock_code, m.stock_name,
@@ -131,6 +131,8 @@ def analyze_articles(
     vstar_weight_map = {v.id: v.weight_coefficient for v in vstars}
     # vstar id -> nickname 映射
     vstar_name_map = {v.id: v.nickname for v in vstars}
+    # 文章 id -> published_at 映射 (for first_mention_time)
+    article_pub_times = {a.id: a.published_at for a in articles}
 
     for (article_id, code, name, snippet, sentiment, score) in all_mentions:
         vstar_id = article_vstar_map.get(article_id)
@@ -176,6 +178,14 @@ def analyze_articles(
             else:
                 neutral_vstars.add(vstar_id)
 
+            # 跟踪最早提及时间
+            for m in mentions:
+                aid = m["article_id"]
+                pub_time = article_pub_times.get(aid)
+                if pub_time:
+                    if first_mention_time is None or pub_time < first_mention_time:
+                        first_mention_time = pub_time
+
             # 收集片段
             for m in mentions:
                 all_snippets.append((vstar_id, m["snippet"], m["sentiment"], m["score"]))
@@ -204,6 +214,7 @@ def analyze_articles(
             "negative_count": len(negative_vstars),
             "vstar_list": vstar_names,
             "snippets": all_snippets,
+            "first_mention_time": first_mention_time,
         })
 
     # 按热度降序排列
@@ -225,6 +236,7 @@ def analyze_articles(
             neutral_count=item["neutral_count"],
             negative_count=item["negative_count"],
             hotness_score=item["hotness_score"],
+            first_mention_time=item.get("first_mention_time"),
         )
         db.add(result)
 

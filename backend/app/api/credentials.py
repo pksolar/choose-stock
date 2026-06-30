@@ -109,7 +109,7 @@ def delete_credential(platform: str, db: Session = Depends(get_db)):
 
 @router.post("/{platform}/login")
 async def login_platform(platform: str, db: Session = Depends(get_db)):
-    """触发平台登录（使用已存储的凭据）"""
+    """触发平台自动登录（使用已存储的凭据，无头浏览器模式）"""
     cred = db.query(PlatformCredential).filter(
         PlatformCredential.platform == platform
     ).first()
@@ -147,6 +147,33 @@ async def login_platform(platform: str, db: Session = Depends(get_db)):
         "success": success,
         "message": f"{platform} 登录{'成功' if success else '失败，可能需要手动处理验证码'}",
         "login_status": cred.login_status,
+    }
+
+
+@router.post("/{platform}/login-visible")
+async def login_platform_visible(platform: str, db: Session = Depends(get_db)):
+    """触发平台登录（打开可见浏览器窗口，用于手动完成验证码等）"""
+    valid_platforms = {"知乎", "微博", "雪球"}
+    if platform not in valid_platforms:
+        raise HTTPException(
+            status_code=400,
+            detail=f"平台必须是: {', '.join(sorted(valid_platforms))}",
+        )
+
+    from app.services.browser_manager import browser_manager
+
+    result = await browser_manager.login_platform_visible(platform, headless=False)
+
+    cred = db.query(PlatformCredential).filter(
+        PlatformCredential.platform == platform
+    ).first()
+    if cred:
+        cred.login_status = "success" if result["success"] else "failed"
+        db.commit()
+
+    return {
+        "platform": platform,
+        **result,
     }
 
 

@@ -218,14 +218,33 @@ def _run_async(coro):
     """Bridge async Playwright code to synchronous callers.
 
     Playwright browser objects are bound to the event loop they were created in.
-    We must schedule the coroutine on that same loop, not create a new one.
+    We schedule the coroutine on that same loop via run_coroutine_threadsafe.
+    There is NO asyncio.run() fallback — Playwright objects bound to another
+    loop cannot be used from a new loop.
     """
     from app.services.browser_manager import browser_manager
     target_loop = getattr(browser_manager, '_loop', None)
-    if target_loop and target_loop.is_running():
+
+    if not target_loop or not target_loop.is_running():
+        print("[WARN] Browser event loop is not running — cannot execute async operation")
+        return []
+
+    if not browser_manager.is_ready:
+        print("[WARN] Browser is not ready — cannot execute async operation")
+        return []
+
+    try:
         future = asyncio.run_coroutine_threadsafe(coro, target_loop)
-        return future.result(timeout=120)
-    return asyncio.run(coro)
+        return future.result(timeout=30)
+    except asyncio.TimeoutError:
+        print("[WARN] Async operation timed out after 30s — browser may be stuck")
+        return []
+    except asyncio.CancelledError:
+        print("[WARN] Async operation was cancelled")
+        return []
+    except Exception as e:
+        print(f"[WARN] Async operation failed: {e}")
+        return []
 
 
 # ========================================================================
@@ -304,102 +323,12 @@ def generate_dynamic_articles(vstar: VStar, count: int = 5) -> List[Dict]:
     return articles
 
 
-# ========================================================================
-#  Mock data (compatible with old API, used at initialization)
-# ========================================================================
-
-MOCK_ARTICLES = [
-    ("唐史主任司马迁", "雪球", "近期调研汇总：重点关注新能源与半导体",
-     "最近走访了几家公司，宁德时代(300750)的产线利用率持续高位，订单饱满。另外中芯国际(688981)的先进制程有突破性进展，值得关注。贵州茅台(600519)春节动销数据超预期，消费复苏信号明显。",
-     0),
-    ("招财大牛猫", "公众号", "闲聊几句，聊聊最近的持仓",
-     "我最近加仓了东方财富(300059)，券商里面它互联网属性最强。另外阳光电源(300274)的海外订单增长很快，逆变器毛利率回升。但要注意隆基绿能(601012)的竞争压力加大，行业内卷严重。",
-     1),
-    ("刘备教授", "知乎", "医药板块深度分析：创新药的机会来了？",
-     "恒瑞医药(600276)的PD-1新适应症获批，创新药管线逐步兑现。同时迈瑞医疗(300760)的海外市场拓展加速，医疗新基建持续受益。不过复星医药(600196)的商誉问题需要警惕。",
-     0),
-    ("林奇投资笔记", "雪球", "AI算力赛道全面梳理",
-     "浪潮信息(000977)的AI服务器出货量增长迅速，寒武纪(688256)的思元590性能超预期。中科曙光(603019)也值得跟踪，但估值已经不便宜。金山办公(688111)的AI应用落地速度在加快。",
-     2),
-    ("期货小明", "微博", "有色金属周期启动判断",
-     "紫金矿业(601899)的海外矿山投产顺利，铜金价格共振。北方稀土(600111)受益于新能源车磁材需求增长。此外中国铝业(601600)的电解铝利润改善明显。",
-     1),
-    ("股海老船长", "东方财富", "消费白马股估值修复行情展望",
-     "美的集团(000333)的海外营收占比持续提升，格力电器(000651)渠道改革初见成效。伊利股份(600887)的奶粉业务超预期，双汇发展(000895)的高股息策略具备防御价值。五粮液(000858)当前估值合理，有配置价值。",
-     0),
-    ("月风投资笔记", "知乎", "新能源车产业链最新跟踪",
-     "宁德时代(300750)麒麟电池量产进度超预期，比亚迪(002594)的海外市场拓展迅猛。同时先导智能(300450)受益于电池厂扩产，订单能见度到2025年。天齐锂业(002466)的锂盐价格企稳。",
-     2),
-    ("价值发现者", "雪球", "银行股投资价值重估",
-     "招商银行(600036)的零售业务护城河依然深厚，财富管理转型持续推进。宁波银行(002142)的资产质量在全行业领先，拨备覆盖率充足。工商银行(601398)的高股息率在当前低利率环境下极具吸引力。",
-     1),
-    ("打板高手日记", "同花顺", "短线情绪观察：AI与机器人",
-     "工业富联(601138)的AI服务器代工业务量翻倍，汇川技术(300124)的机器人业务开始放量。科大讯飞(002230)的星火大模型应用场景拓展顺利，商业化提速。天孚通信(300394)的光模块800G需求旺盛。",
-     0),
-    ("老端投资学", "公众号", "军工板块投资机会分析",
-     "中航沈飞(600760)的新机型列装加速，西部超导(688122)的高温合金订单增长。另外中国船舶(600150)的军民船业务双轮驱动，业绩拐点已经出现。",
-     3),
-]
-
-
 def generate_mock_articles(db: Session, vstars: List[VStar]) -> List[Article]:
-    """
-    Generate mock article data for built-in demo VStars.
-    Also generates dynamic content for additional VStars.
-    """
+    """Generate mock article data for demo VStars."""
     created = []
     now = datetime.utcnow()
-    vstar_map = {(v.nickname, v.platform): v for v in vstars}
-    vstar_local_cache = {}
 
-    # 1. Process hardcoded demo VStars
-    for nickname, platform, title, content, day_offset in MOCK_ARTICLES:
-        vstar = vstar_map.get((nickname, platform))
-        if not vstar:
-            continue
-
-        pub_time = now - timedelta(days=day_offset, hours=random.randint(0, 23))
-
-        existing = db.query(Article).filter(
-            Article.vstar_id == vstar.id,
-            Article.title == title,
-        ).first()
-        if existing:
-            continue
-
-        source_hash = get_content_hash(title, content)
-        article = Article(
-            vstar_id=vstar.id,
-            title=title,
-            content=content,
-            summary=content[:200],
-            url=f"https://{platform}.example.com/article/{hashlib.md5(title.encode()).hexdigest()[:8]}",
-            platform=platform,
-            published_at=pub_time,
-            source_hash=source_hash,
-        )
-        db.add(article)
-        created.append(article)
-        vstar_local_cache.setdefault(vstar.id, []).append({
-            "title": title,
-            "content": content,
-            "summary": content[:200],
-            "url": f"https://{platform}.example.com/article/{hashlib.md5(title.encode()).hexdigest()[:8]}",
-            "platform": platform,
-            "published_at": pub_time,
-            "source_hash": source_hash,
-        })
-
-        if not vstar.last_article_time or pub_time > vstar.last_article_time:
-            vstar.last_article_time = pub_time
-
-    db.commit()
-
-    # 2. Generate dynamic articles for remaining VStars
-    mock_vstar_keys = set(vstar_map.keys()) & {(n, p) for n, p, _, _, _ in MOCK_ARTICLES}
-    remaining_vstars = [v for v in vstars if (v.nickname, v.platform) not in mock_vstar_keys]
-
-    for vstar in remaining_vstars:
+    for vstar in vstars:
         existing_count = db.query(Article).filter(Article.vstar_id == vstar.id).count()
         if existing_count > 0:
             continue
@@ -427,18 +356,13 @@ def generate_mock_articles(db: Session, vstars: List[VStar]) -> List[Article]:
             )
             db.add(article)
             created.append(article)
-            vstar_local_cache.setdefault(vstar.id, []).append(art_data)
 
             if not vstar.last_article_time or pub_time > vstar.last_article_time:
                 vstar.last_article_time = pub_time
 
+        save_articles_to_local(vstar.nickname, vstar.platform, dyn_articles)
+
     if created:
         db.commit()
-
-    # 3. Sync to local JSON files
-    for vstar_id, articles_data in vstar_local_cache.items():
-        vstar = db.query(VStar).filter(VStar.id == vstar_id).first()
-        if vstar:
-            save_articles_to_local(vstar.nickname, vstar.platform, articles_data)
 
     return created

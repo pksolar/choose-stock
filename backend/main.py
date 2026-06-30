@@ -30,24 +30,9 @@ from app.api.credentials import router as credentials_router
 
 
 def seed_initial_data():
-    """初始化种子数据：仅保留 MR Dang 作为示例。清理旧版预设大V。"""
+    """初始化种子数据：添加示例大V，并触发后台文章抓取。"""
     db = SessionLocal()
     try:
-        # 旧版内置大V（需要清理）
-        OLD_BUILTIN_NICKNAMES = {
-            "唐史主任司马迁", "招财大牛猫", "刘备教授", "林奇投资笔记",
-            "期货小明", "股海老船长", "月风投资笔记", "价值发现者",
-            "打板高手日记", "老端投资学",
-        }
-
-        # 清理旧版内置大V
-        for old_name in OLD_BUILTIN_NICKNAMES:
-            v = db.query(VStar).filter(VStar.nickname == old_name).first()
-            if v:
-                db.query(Article).filter(Article.vstar_id == v.id).delete()
-                db.delete(v)
-                print(f"  已清理旧版内置大V: {old_name} ({v.platform})")
-
         # 示例大V（真实知乎用户）
         BUILTIN_VSTARS = [
             ("张佳玮", "知乎", "auto", 1.0),
@@ -72,7 +57,6 @@ def seed_initial_data():
             articles = generate_mock_articles(db, vstars)
             print(f"已生成 {len(articles)} 篇模拟文章")
         else:
-            # 后台异步为所有大V抓取文章
             import threading
             from app.services.scraper import scrape_and_persist
 

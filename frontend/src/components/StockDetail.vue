@@ -22,7 +22,7 @@
         <div class="stats-row" v-if="detail">
           <el-statistic title="热度值" :value="detail.hotness_score" :precision="1" />
           <el-statistic title="提及人数" :value="detail.mention_count" />
-          <el-statistic title="看多👎">
+          <el-statistic title="看多👍">
             <template #default>
               <span class="stat-positive">{{ detail.positive_count }}</span>
             </template>
@@ -73,6 +73,9 @@ function loadDetail() {
     .then(res => {
       detail.value = res.data
     })
+    .catch(err => {
+      console.error('Failed to load stock detail:', err)
+    })
     .finally(() => { loading.value = false })
 }
 
@@ -81,6 +84,9 @@ function loadKLine() {
     .then(res => {
       klineData.value = res.data.data || []
       markLineDate.value = res.data.mark_line_date || null
+    })
+    .catch(err => {
+      console.error('Failed to load K-line data:', err)
     })
 }
 

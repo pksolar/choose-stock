@@ -18,13 +18,6 @@ class Settings(BaseSettings):
     # 数据库配置（默认使用 SQLite）
     DATABASE_URL_SYNC: str = f"sqlite:///{BASE_DIR}/data/vstock.db"
 
-    # Redis 配置（Celery broker + result backend）
-    REDIS_URL: str = "redis://localhost:6379/0"
-
-    # Celery 配置
-    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
-
     # 爬虫配置
     SCRAPER_DELAY_MIN: float = 2.0   # 最小请求间隔（秒）
     SCRAPER_DELAY_MAX: float = 5.0   # 最大请求间隔（秒）
@@ -38,9 +31,6 @@ class Settings(BaseSettings):
     # NLP 缓存时间（秒）
     NLP_CACHE_TTL: int = 3600
 
-    # CSRF 保护开关
-    CSRF_ENABLED: bool = False
-
     # 服务端口
     BACKEND_PORT: int = 8000
     FRONTEND_PORT: int = 5173
@@ -48,11 +38,8 @@ class Settings(BaseSettings):
     # Playwright 浏览器自动化
     PLAYWRIGHT_HEADLESS: bool = True
     PLAYWRIGHT_TIMEOUT: int = 30000  # 页面加载超时（毫秒）
-    BROWSER_USE_CDP: bool = False   # 连接已有 Chrome 而非启动新浏览器
-    BROWSER_CDP_ENDPOINT: str = "http://localhost:9222"
 
     # 平台凭据持久化
-    COOKIE_STORAGE_DIR: str = str(BASE_DIR / "data" / "cookies")
     PLAYWRIGHT_AUTH_DIR: str = str(BASE_DIR / "data" / "auth_states")
 
     # 默认平台凭据（可在 .env 中配置，也可通过 API/UI 配置）
@@ -66,31 +53,11 @@ class Settings(BaseSettings):
     class Config:
         env_file = str(BASE_DIR / ".." / ".env")
         env_file_encoding = "utf-8"
+        extra = "ignore"  # 忽略 .env 中多余的字段（如旧版 Redis 配置）
 
 
 settings = Settings()
 
 # 确保数据目录存在
 os.makedirs(BASE_DIR / "data", exist_ok=True)
-os.makedirs(BASE_DIR / "data" / "cookies", exist_ok=True)
 os.makedirs(BASE_DIR / "data" / "auth_states", exist_ok=True)
-
-
-def check_redis_available() -> bool:
-    """检测 Redis 是否可用"""
-    try:
-        import redis
-        r = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
-        r.ping()
-        r.close()
-        return True
-    except Exception:
-        return False
-
-
-REDIS_AVAILABLE = check_redis_available()
-
-if not REDIS_AVAILABLE:
-    print("[WARN] Redis 不可用，将使用同步模式运行（不需要 Celery Worker）")
-    print("       如需异步处理，请安装并启动 Redis，然后重启后端")
-

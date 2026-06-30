@@ -1,6 +1,49 @@
 <template>
   <div class="vstar-management">
-    <el-card shadow="hover">
+    <!-- 平台登录状态 -->
+    <el-card shadow="hover" class="login-status-card">
+      <template #header>
+        <div class="card-header">
+          <span><el-icon><Key /></el-icon> 平台登录状态</span>
+        </div>
+      </template>
+      <div class="login-platforms">
+        <div v-for="lp in loginPlatforms" :key="lp.platform" class="login-platform-item">
+          <div class="login-platform-info">
+            <el-tag :type="lp.hasAuth ? 'success' : 'info'" size="small">{{ lp.platform }}</el-tag>
+            <span class="login-status-text">
+              {{ lp.loginLoading ? '登录中...' : lp.hasAuth ? '已登录' : '未登录' }}
+            </span>
+            <span v-if="lp.hasAuth && lp.cookieInfo" class="cookie-detail">
+              {{ lp.cookieInfo }}
+            </span>
+          </div>
+          <div class="login-platform-actions">
+            <el-button
+              type="primary"
+              size="small"
+              :loading="lp.loginLoading"
+              @click="handlePlatformLogin(lp.platform)"
+            >
+              自动登录
+            </el-button>
+            <el-button
+              type="warning"
+              size="small"
+              :loading="lp.loginLoading"
+              @click="handlePlatformLoginVisible(lp.platform)"
+            >
+              可见窗口登录
+            </el-button>
+          </div>
+        </div>
+      </div>
+      <div class="login-hint">
+        提示：如果自动登录失败（如遇到验证码），请使用"可见窗口登录"，在打开的浏览器中手动完成验证。
+      </div>
+    </el-card>
+
+    <el-card shadow="hover" style="margin-top: 16px;">
       <template #header>
         <div class="card-header">
           <span><el-icon><UserFilled /></el-icon> 大V管理</span>
@@ -135,7 +178,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getVStars, createVStar, updateVStar, deleteVStar, getPlatforms, refreshVStar, getVStarArticles } from '../api'
+import { getVStars, createVStar, updateVStar, deleteVStar, getPlatforms, refreshVStar, getVStarArticles, getCredentials, loginPlatform, loginPlatformVisible } from '../api'
 
 const vstars = ref([])
 const platforms = ref([])
@@ -148,6 +191,71 @@ const articlesDialogVisible = ref(false)
 const articlesLoading = ref(false)
 const articlesList = ref([])
 const articlesVStar = ref(null)
+
+// 平台登录状态
+const loginPlatforms = ref([
+  { platform: '知乎', hasAuth: false, loginLoading: false, cookieInfo: '' },
+  { platform: '微博', hasAuth: false, loginLoading: false, cookieInfo: '' },
+  { platform: '雪球', hasAuth: false, loginLoading: false, cookieInfo: '' },
+])
+
+function loadLoginStatus() {
+  getCredentials().then(res => {
+    const creds = res.data || []
+    loginPlatforms.value.forEach(lp => {
+      const cred = creds.find(c => c.platform === lp.platform)
+      if (cred) {
+        lp.hasAuth = cred.login_status === 'success' && cred.has_cookies
+        lp.cookieInfo = cred.has_cookies ? '有Cookie' : ''
+      }
+    })
+  }).catch(() => {})
+}
+
+async function handlePlatformLogin(platform) {
+  const item = loginPlatforms.value.find(p => p.platform === platform)
+  if (!item) return
+  item.loginLoading = true
+  try {
+    const res = await loginPlatform(platform)
+    const data = res.data
+    if (data.success) {
+      item.hasAuth = true
+      ElMessage.success(`${platform} 登录成功`)
+    } else {
+      ElMessage.warning(`${platform} 自动登录失败：${data.message || '可能需要验证码'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`${platform} 登录请求失败: ${err.response?.data?.detail || err.message}`)
+  } finally {
+    item.loginLoading = false
+    loadLoginStatus()
+  }
+}
+
+async function handlePlatformLoginVisible(platform) {
+  const item = loginPlatforms.value.find(p => p.platform === platform)
+  if (!item) return
+  item.loginLoading = true
+  ElMessage.info(`${platform} 正在打开浏览器窗口，请在浏览器中完成登录后，回到此窗口查看结果...`)
+  try {
+    const res = await loginPlatformVisible(platform)
+    const data = res.data
+    if (data.success) {
+      item.hasAuth = true
+      item.cookieInfo = `${data.cookies_count || 0} 个Cookie`
+      ElMessage.success(`${platform} 登录成功！`)
+    } else {
+      item.hasAuth = false
+      ElMessage.warning(`${platform} 登录未完成: ${data.error || '未检测到关键Cookie'}`)
+    }
+  } catch (err) {
+    ElMessage.error(`${platform} 可见登录请求失败: ${err.response?.data?.detail || err.message}`)
+  } finally {
+    item.loginLoading = false
+    loadLoginStatus()
+  }
+}
 
 const form = reactive({
   nickname: '',
@@ -294,6 +402,7 @@ function formatTime(t) {
 onMounted(() => {
   loadVStars()
   loadPlatforms()
+  loadLoginStatus()
 })
 </script>
 
@@ -301,6 +410,56 @@ onMounted(() => {
 .vstar-management {
   max-width: 1300px;
   margin: 0 auto;
+}
+
+.login-status-card {
+  margin-bottom: 0;
+}
+
+.login-platforms {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-platform-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.login-platform-item:last-child {
+  border-bottom: none;
+}
+
+.login-platform-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-status-text {
+  font-size: 14px;
+  color: #606266;
+  min-width: 60px;
+}
+
+.cookie-detail {
+  font-size: 12px;
+  color: #909399;
+}
+
+.login-platform-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.login-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .card-header {

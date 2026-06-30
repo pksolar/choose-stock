@@ -67,4 +67,18 @@ export function searchStocks(q) {
   return api.get('/stocks/search', { params: { q } })
 }
 
+// ===== 凭据管理 =====
+
+export function getCredentials() {
+  return api.get('/credentials/')
+}
+
+export function loginPlatform(platform) {
+  return api.post(`/credentials/${platform}/login`)
+}
+
+export function loginPlatformVisible(platform) {
+  return api.post(`/credentials/${platform}/login-visible`)
+}
+
 export default api

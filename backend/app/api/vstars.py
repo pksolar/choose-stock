@@ -4,12 +4,26 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import get_db, SessionLocal
 from app.models.models import VStar, Article, PlatformEnum
 from app.schemas.schemas import VStarCreate, VStarUpdate, VStarResponse, APIResponse
 from app.services.scraper import scrape_and_persist
 
 router = APIRouter(prefix="/api/vstars", tags=["大V管理"])
+
+
+def _background_scrape(vstar_id: int):
+    """后台抓取任务，使用独立的数据库会话"""
+    db = SessionLocal()
+    try:
+        vstar = db.query(VStar).filter(VStar.id == vstar_id).first()
+        if vstar:
+            count = scrape_and_persist(vstar, db)
+            print(f"[BG] 后台抓取完成: '{vstar.nickname}' 新增 {count} 篇")
+    except Exception as e:
+        print(f"[BG] 后台抓取失败 (vstar_id={vstar_id}): {e}")
+    finally:
+        db.close()
 
 
 @router.get("/", response_model=List[dict])
@@ -58,8 +72,8 @@ def list_vstars(db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=VStarResponse)
-def create_vstar(data: VStarCreate, db: Session = Depends(get_db)):
-    """添加大V（并自动抓取文章）"""
+def create_vstar(data: VStarCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """添加大V（后台自动抓取文章）"""
     # 验证平台
     valid_platforms = [p.value for p in PlatformEnum]
     if data.platform not in valid_platforms:
@@ -80,13 +94,9 @@ def create_vstar(data: VStarCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(vstar)
 
-    # 自动抓取文章
+    # 后台自动抓取文章（非阻塞）
     if data.data_source_mode == "auto":
-        try:
-            new_count = scrape_and_persist(vstar, db)
-            db.refresh(vstar)
-        except Exception as e:
-            print(f"[WARN] 新增大V自动抓取失败: {e}")
+        background_tasks.add_task(_background_scrape, vstar.id)
 
     stale_threshold = datetime.utcnow() - timedelta(days=7)
     return VStarResponse(
@@ -156,19 +166,18 @@ def delete_vstar(vstar_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{vstar_id}/refresh")
-def refresh_vstar(vstar_id: int, db: Session = Depends(get_db)):
-    """手动刷新指定大V的文章数据（抓取+入库+本地存储）"""
+def refresh_vstar(vstar_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """手动刷新指定大V的文章数据（后台抓取+入库+本地存储）"""
     vstar = db.query(VStar).filter(VStar.id == vstar_id).first()
     if not vstar:
         raise HTTPException(status_code=404, detail="大V不存在")
 
-    new_count = scrape_and_persist(vstar, db)
+    background_tasks.add_task(_background_scrape, vstar.id)
     article_count = db.query(Article).filter(Article.vstar_id == vstar.id).count()
 
     return {
         "success": True,
-        "message": f"刷新完成，新增 {new_count} 篇文章，共 {article_count} 篇",
-        "new_articles": new_count,
+        "message": f"刷新任务已启动，将在后台进行",
         "total_articles": article_count,
         "last_article_time": vstar.last_article_time.isoformat() if vstar.last_article_time else None,
     }

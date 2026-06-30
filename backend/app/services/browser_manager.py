@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 _STEALTH_PATH = Path(__file__).resolve().parent / "stealth.min.js"
 
-# Auth state persistence directory
 _AUTH_DIR = Path(settings.PLAYWRIGHT_AUTH_DIR)
 
 
@@ -30,9 +30,18 @@ class BrowserManager:
         self._browser: Optional[Browser] = None
         self._stealth_js: Optional[str] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._last_health_check = 0.0
+        self._health_check_interval = 30.0  # seconds between health checks
 
-    async def start(self):
-        """Launch browser with anti-detection flags."""
+    async def start(self, headless: Optional[bool] = None):
+        """Launch browser with anti-detection flags.
+
+        Args:
+            headless: Override PLAYWRIGHT_HEADLESS setting. None = use config default.
+        """
+        if headless is None:
+            headless = settings.PLAYWRIGHT_HEADLESS
+
         self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
 
@@ -49,7 +58,7 @@ class BrowserManager:
         ]
 
         self._browser = await self._playwright.chromium.launch(
-            headless=settings.PLAYWRIGHT_HEADLESS,
+            headless=headless,
             args=launch_args,
         )
 
@@ -58,22 +67,58 @@ class BrowserManager:
         else:
             logger.warning("stealth.min.js not found, anti-detection disabled")
 
-        logger.info("Playwright browser started (headless=%s)", settings.PLAYWRIGHT_HEADLESS)
+        logger.info("Playwright browser started (headless=%s)", headless)
 
     async def stop(self):
         """Close browser and stop Playwright."""
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
+        try:
+            if self._browser:
+                await self._browser.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                await self._playwright.stop()
+        except Exception:
+            pass
+        self._browser = None
+        self._playwright = None
         logger.info("Playwright browser stopped")
+
+    async def restart(self):
+        """Restart the browser (e.g., after a crash)."""
+        logger.info("Restarting Playwright browser...")
+        await self.stop()
+        await self.start()
+
+    async def health_check(self) -> bool:
+        """Quick check that the browser is responsive.
+
+        Only runs at most every _health_check_interval seconds to avoid overhead.
+        """
+        now = time.time()
+        if now - self._last_health_check < self._health_check_interval:
+            return self._browser is not None and self._browser.is_connected()
+
+        self._last_health_check = now
+
+        if not self._browser or not self._browser.is_connected():
+            return False
+
+        try:
+            page = await self._browser.new_page()
+            await page.goto("about:blank", timeout=5000)
+            await page.close()
+            return True
+        except Exception:
+            logger.warning("Browser health check failed")
+            return False
 
     # ------------------------------------------------------------------
     # Auth state persistence
     # ------------------------------------------------------------------
 
     def _auth_file(self, platform: str) -> Path:
-        """Get the auth state file path for a platform."""
         _AUTH_DIR.mkdir(parents=True, exist_ok=True)
         safe = platform.replace("/", "_").replace("\\", "_")
         return _AUTH_DIR / f"{safe}.json"
@@ -98,7 +143,6 @@ class BrowserManager:
             return None
         try:
             state = json.loads(auth_path.read_text(encoding="utf-8"))
-            # Validate structure: must have cookies or origins
             if "cookies" in state or "origins" in state:
                 logger.info("Auth state loaded for %s (%d cookies)", platform,
                             len(state.get("cookies", [])))
@@ -118,6 +162,13 @@ class BrowserManager:
         If load_auth is True and a persisted auth state exists, it is loaded
         into the context so the session starts pre-authenticated.
         """
+        if not self._browser or not self._browser.is_connected():
+            logger.warning("Browser disconnected, attempting restart...")
+            try:
+                await self.restart()
+            except Exception as e:
+                raise RuntimeError(f"Browser is not running and restart failed: {e}")
+
         viewports = {
             "weibo": {"width": 390, "height": 844},
             "wechat": {"width": 390, "height": 844},
@@ -167,7 +218,6 @@ class BrowserManager:
 
     async def login_zhihu(self, username: str, password: str) -> bool:
         """Log into Zhihu and persist auth state. Returns True on success."""
-        # Remove stale auth state first
         auth_file = self._auth_file("知乎")
         if auth_file.exists():
             auth_file.unlink()
@@ -176,16 +226,13 @@ class BrowserManager:
         try:
             page = await context.new_page()
 
-            # Navigate to signin page
             await page.goto("https://www.zhihu.com/signin",
                             wait_until="networkidle", timeout=45000)
             await page.wait_for_timeout(3000)
 
-            # Check if already on signin page or redirected
             current_url = page.url
             logger.info("Zhihu login: current URL = %s", current_url)
 
-            # If we're not on signin page, maybe already logged in? Check.
             if "signin" not in current_url:
                 cookies = await context.cookies()
                 z_c0 = [c for c in cookies if c['name'] == 'z_c0']
@@ -298,14 +345,12 @@ class BrowserManager:
                     continue
 
             if not clicked:
-                # Try pressing Enter as fallback
                 await page.keyboard.press("Enter")
                 logger.info("Zhihu login: pressed Enter as fallback")
 
             # 5. Wait for login result
             await page.wait_for_timeout(5000)
 
-            # Check for CAPTCHA
             page_text = await page.evaluate("() => document.body.innerText")
             if "验证码" in page_text or "请完成安全验证" in page_text:
                 logger.warning("Zhihu login: CAPTCHA detected — manual intervention needed")
@@ -324,7 +369,6 @@ class BrowserManager:
                 return True
             else:
                 logger.warning("Zhihu login failed: no z_c0 cookie. Captcha or wrong credentials?")
-                # Still save cookies (d_c0 etc. may help)
                 await self.save_auth_state(context, "知乎")
                 await context.close()
                 return False
@@ -362,7 +406,6 @@ class BrowserManager:
 
             await page.wait_for_timeout(5000)
 
-            # Check if we arrived at m.weibo.cn (logged in)
             current_url = page.url
             if "passport" not in current_url:
                 await self.save_auth_state(context, "weibo")
@@ -389,7 +432,6 @@ class BrowserManager:
             await page.goto("https://xueqiu.com/", wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(random.randint(2000, 3000))
 
-            # Click login button on homepage
             try:
                 login_btn = page.locator("a:has-text('登录'), button:has-text('登录')").first
                 if await login_btn.count() > 0:
@@ -417,7 +459,6 @@ class BrowserManager:
 
             await page.wait_for_timeout(5000)
 
-            # Check login success
             logged_in = await page.evaluate("""() => {
                 return !document.querySelector('a[href*="login"]');
             }""")
@@ -438,6 +479,68 @@ class BrowserManager:
             return False
 
     # ------------------------------------------------------------------
+    # Visible login (replaces login_zhihu.py)
+    # ------------------------------------------------------------------
+
+    async def login_platform_visible(self, platform: str, headless: bool = False) -> dict:
+        """Open a browser window for manual login. Used when CAPTCHA blocks auto-login.
+
+        Returns dict with keys: success, cookies_count, key_cookies, error
+        """
+        if self._browser and self._browser.is_connected():
+            await self.stop()
+
+        await self.start(headless=headless)
+        context = await self.create_context(platform, load_auth=False)
+        page = await context.new_page()
+
+        signin_urls = {
+            "知乎": "https://www.zhihu.com/signin",
+            "微博": "https://passport.weibo.cn/signin/login",
+            "雪球": "https://xueqiu.com/",
+        }
+        url = signin_urls.get(platform, "https://www.zhihu.com/signin")
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        print(f"\n{'='*60}")
+        print(f"  {platform} 手动登录")
+        print(f"{'='*60}")
+        print(f"  浏览器已打开 {platform} 登录页面")
+        print(f"  请手动完成登录（包括验证码）")
+        print(f"  登录成功后，回到这里按 Enter 继续...")
+        print(f"{'='*60}")
+        input()
+
+        cookies = await context.cookies()
+        cookie_names = [c['name'] for c in cookies]
+
+        key_cookie_map = {
+            "知乎": "z_c0",
+            "微博": "SUB",
+            "雪球": "xq_a_token",
+        }
+        key_cookie = key_cookie_map.get(platform, "")
+        has_key = key_cookie in cookie_names
+
+        await self.save_auth_state(context, platform)
+        await context.close()
+
+        if headless:
+            # Restart in headless mode for normal operation
+            await self.stop()
+            await self.start(headless=True)
+
+        result = {
+            "success": has_key,
+            "cookies_count": len(cookies),
+            "key_cookies": {k: k in cookie_names for k in [key_cookie] if key_cookie},
+            "cookie_names": cookie_names,
+        }
+        if not has_key:
+            result["error"] = f"未检测到 {key_cookie} cookie，登录可能未完成"
+        return result
+
+    # ------------------------------------------------------------------
     # Auto-login orchestration
     # ------------------------------------------------------------------
 
@@ -451,7 +554,6 @@ class BrowserManager:
             logger.info("Auth state already exists for %s", platform)
             return True
 
-        # Check config for credentials
         cred_map = {
             "知乎": (settings.ZHIHU_USERNAME, settings.ZHIHU_PASSWORD),
             "weibo": (settings.WEIBO_USERNAME, settings.WEIBO_PASSWORD),
@@ -461,7 +563,6 @@ class BrowserManager:
 
         username, password = cred_map.get(platform, ("", ""))
         if not username or not password:
-            # Also check DB
             try:
                 from app.models.database import SessionLocal
                 from app.models.models import PlatformCredential
@@ -482,7 +583,6 @@ class BrowserManager:
             logger.info("No credentials configured for %s", platform)
             return False
 
-        # Attempt login
         login_handlers = {
             "知乎": self.login_zhihu,
             "weibo": self.login_weibo,
